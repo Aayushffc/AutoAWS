@@ -1,14 +1,18 @@
+# ==================================================================================================
+# AutoAWS - Root Variables
+# ==================================================================================================
+
 # --------------------------------------------------------------------------------------------------
-# General Project Variables
+# Project & Client Identifiers
 # --------------------------------------------------------------------------------------------------
 variable "aws_region" {
   description = "AWS target region for all infrastructure provisioning"
   type        = string
-  default     = "ap-south-1"
+  default     = "us-west-1"
 }
 
 variable "project_name" {
-  description = "Unique project identifier prefix for naming resources"
+  description = "Unique project identifier prefix (slug format: lowercase alphanumeric and hyphens)"
   type        = string
   default     = "autoaws"
 
@@ -18,19 +22,36 @@ variable "project_name" {
   }
 }
 
+variable "client_name" {
+  description = "Client slug identifier (if set, overrides project_name for multi-client onboarding)"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.client_name == "" || can(regex("^[a-z0-9-]+$", var.client_name))
+    error_message = "Client name must be slug format (lowercase alphanumeric and hyphens only)."
+  }
+}
+
+variable "cluster_name" {
+  description = "Custom ECS cluster name (e.g. 'Tapsy'). If empty, defaults to '<project_name>-cluster'"
+  type        = string
+  default     = ""
+}
+
 variable "environment" {
-  description = "Target deployment environment (dev or prod)"
+  description = "Target deployment environment (dev, staging, production, prod)"
   type        = string
   default     = "dev"
 
   validation {
-    condition     = contains(["dev", "prod"], var.environment)
-    error_message = "Environment must be either 'dev' or 'prod'."
+    condition     = contains(["dev", "staging", "prod", "production"], var.environment)
+    error_message = "Environment must be one of: 'dev', 'staging', 'prod', or 'production'."
   }
 }
 
 # --------------------------------------------------------------------------------------------------
-# Networking Variables
+# Networking (Zero-NAT Cost Optimization)
 # --------------------------------------------------------------------------------------------------
 variable "vpc_cidr" {
   description = "CIDR block for the custom VPC"
@@ -44,35 +65,68 @@ variable "public_subnet_cidrs" {
   default     = ["10.0.1.0/24", "10.0.2.0/24"]
 }
 
-variable "private_subnet_cidrs" {
-  description = "CIDR blocks for the two private subnets spanning multiple AZs"
+variable "database_subnet_cidrs" {
+  description = "CIDR blocks for the two isolated database subnets spanning multiple AZs"
   type        = list(string)
-  default     = ["10.0.11.0/24", "10.0.12.0/24"]
+  default     = ["10.0.21.0/24", "10.0.22.0/24"]
 }
 
 variable "enable_nat_gateway" {
-  description = "Provision a NAT Gateway for outbound internet access in private subnets"
+  description = "Provision an AWS NAT Gateway. Default is false (saving ~$32.85/month) by running Fargate tasks in public subnets with security group isolation."
   type        = bool
-  default     = true
+  default     = false
 }
 
-variable "app_port" {
-  description = "Application port exposed by the Node.js ECS task (e.g. 3000 or 8080)"
+variable "container_port" {
+  description = "Application listening port for backend-api-container (e.g. 3000)"
   type        = number
   default     = 3000
 }
 
 # --------------------------------------------------------------------------------------------------
-# Database Variables
+# Application Load Balancer & Swagger Security
 # --------------------------------------------------------------------------------------------------
-variable "db_instance_class" {
+variable "certificate_arn" {
+  description = "ARN of the ACM SSL/TLS certificate for HTTPS:443 listener (e.g. *.tapsy.app). If empty, a turnkey self-signed certificate is auto-generated so HTTPS is always available."
+  type        = string
+  default     = ""
+}
+
+variable "swagger_whitelist_ips" {
+  description = "CIDR IP blocks permitted to access Swagger UI at /api-docs/*"
+  type        = list(string)
+  default     = ["122.168.85.82/32", "202.89.77.27/32", "122.168.82.7/32", "122.168.81.182/32", "202.89.67.216/32"]
+}
+
+variable "enable_swagger_protection" {
+  description = "Enable path-based IP whitelist and 403 block rules for /api-docs/*"
+  type        = bool
+  default     = true
+}
+
+# --------------------------------------------------------------------------------------------------
+# Amazon RDS PostgreSQL
+# --------------------------------------------------------------------------------------------------
+variable "enable_rds" {
+  description = "Flag controlling whether Amazon RDS PostgreSQL is provisioned"
+  type        = bool
+  default     = true
+}
+
+variable "rds_instance_class" {
   description = "RDS PostgreSQL instance type (e.g. db.t4g.micro, db.t4g.small)"
   type        = string
   default     = "db.t4g.micro"
 }
 
+variable "rds_allocated_storage" {
+  description = "Allocated storage size for RDS instance in GB"
+  type        = number
+  default     = 20
+}
+
 variable "db_engine_version" {
-  description = "RDS PostgreSQL major engine version"
+  description = "PostgreSQL engine version"
   type        = string
   default     = "16"
 }
@@ -89,53 +143,49 @@ variable "db_username" {
   default     = "postgres"
 }
 
-variable "db_allocated_storage" {
-  description = "Allocated storage size for RDS instance in GB"
-  type        = number
-  default     = 20
-}
-
 # --------------------------------------------------------------------------------------------------
-# ECS & Application Variables
+# ECS Fargate & Dual-Container Task Configuration
 # --------------------------------------------------------------------------------------------------
 variable "container_image" {
-  description = "Docker image to deploy onto the ECS Fargate tasks"
+  description = "Docker image for both API and Worker containers"
   type        = string
   default     = "public.ecr.aws/docker/library/node:20-alpine"
 }
 
-variable "container_command" {
-  description = "Startup command for the ECS container. Defaults to a lightweight HTTP server on app_port so default node:20-alpine does not exit immediately and passes ALB health checks (/health). Set to [] when deploying custom built images."
+variable "api_command" {
+  description = "Command for backend-api-container"
   type        = list(string)
-  default = [
-    "node",
-    "-e",
-    "const http = require('http'); const server = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ status: 'ok', service: 'AutoAWS Backend', environment: process.env.ENVIRONMENT || 'dev', path: req.url })); }); server.listen(process.env.PORT || 3000, () => console.log('HTTP Health server listening on port ' + (process.env.PORT || 3000)));"
-  ]
+  default     = ["sh", "-c", "node dist/server.js"]
 }
 
-variable "ecs_cpu" {
-  description = "Fargate CPU units (256, 512, 1024, 2048)"
+variable "worker_command" {
+  description = "Command for backend-worker-container"
+  type        = list(string)
+  default     = ["node", "dist/worker.js"]
+}
+
+variable "ecs_task_cpu" {
+  description = "Total task CPU allocation (null to use environment defaults: 512 for dev/staging, 1024 for prod)"
   type        = number
-  default     = 256
+  default     = null
 }
 
-variable "ecs_memory" {
-  description = "Fargate memory allocation in MiB (512, 1024, 2048, 4096)"
+variable "ecs_task_memory" {
+  description = "Total task memory allocation in MiB (null to use environment defaults: 1024 for dev/staging, 2048 for prod)"
   type        = number
-  default     = 512
+  default     = null
 }
 
-variable "ecs_desired_count_dev" {
-  description = "Desired number of running ECS tasks in the dev environment"
+variable "ecs_desired_count" {
+  description = "Desired number of running ECS tasks (1 for dev/staging, min 2 for prod)"
   type        = number
   default     = 1
 }
 
-variable "ecs_desired_count_prod" {
-  description = "Desired number of running ECS tasks in the prod environment"
-  type        = number
-  default     = 2
+variable "enable_github_deployer_user" {
+  description = "Create a dedicated IAM User + Access Key for GitHub Actions deployments"
+  type        = bool
+  default     = true
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -154,7 +204,7 @@ variable "amplify_repository_url" {
 }
 
 variable "amplify_github_token" {
-  description = "GitHub OAuth/Personal Access Token for AWS Amplify continuous deployment"
+  description = "GitHub Personal Access Token for AWS Amplify continuous deployment"
   type        = string
   default     = ""
   sensitive   = true
@@ -167,7 +217,7 @@ variable "amplify_branch" {
 }
 
 # --------------------------------------------------------------------------------------------------
-# CI/CD & GitHub Integration Variables
+# GitHub Actions CI/CD Integration
 # --------------------------------------------------------------------------------------------------
 variable "enable_github_oidc" {
   description = "Whether to create the GitHub Actions AWS OIDC deploy role"

@@ -10,10 +10,13 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.5"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 
   # Local state backend (state files are gitignored)
-  # Production agency workloads can switch to S3/DynamoDB when team collaboration requires it.
 }
 
 provider "aws" {
@@ -23,9 +26,11 @@ provider "aws" {
     tags = {
       Project     = var.project_name
       Environment = var.environment
-      ManagedBy   = "Terraform"
+      ManagedBy   = "AutoAWS-Terraform"
     }
   }
 }
 
 provider "random" {}
+
+provider "tls" {}
