@@ -1,0 +1,42 @@
+# ==================================================================================================
+# AutoAWS Infrastructure - terraform.tfvars.example
+# Copy this file to terraform.tfvars and customize for your project
+# ==================================================================================================
+
+# AWS Region & Project Setup
+aws_region   = "ap-south-1"
+project_name = "autoaws"
+environment  = "dev" # "dev" or "prod"
+
+# Networking Configuration
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
+enable_nat_gateway   = true
+app_port             = 3000
+
+# PostgreSQL Database Configuration
+db_instance_class    = "db.t4g.micro"
+db_engine_version    = "16"
+db_name              = "appdb"
+db_username          = "postgres"
+db_allocated_storage = 20
+
+# ECS Fargate Configuration
+container_image        = "public.ecr.aws/docker/library/node:20-alpine"
+ecs_cpu                = 256
+ecs_memory             = 512
+ecs_desired_count_dev  = 1
+ecs_desired_count_prod = 2
+
+# AWS Amplify (Next.js SSR Frontend) - Zero resources created if enable_amplify is false
+enable_amplify         = false
+amplify_repository_url = "" # e.g. "https://github.com/my-org/my-nextjs-app"
+amplify_github_token   = "" # Personal Access Token with repo scope
+amplify_branch         = "main"
+
+# GitHub Actions OIDC CI/CD Integration
+enable_github_oidc          = true
+create_github_oidc_provider = true # Set to false if account already has GitHub OIDC provider
+github_org                  = "Aayushffc"
+github_repo                 = "AutoAWS"
