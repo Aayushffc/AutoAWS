@@ -1,0 +1,10 @@
+# Terraform local state receipts
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Local secrets & configs
+terraform.tfvars
+*.auto.tfvars
+*.tfvars.json
