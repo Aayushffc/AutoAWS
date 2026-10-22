@@ -64,6 +64,7 @@ module "ecs_node" {
   s3_bucket_name      = module.storage_cdn.s3_bucket_name
   app_port            = var.app_port
   container_image     = var.container_image
+  container_command   = var.container_command
   cpu                 = var.ecs_cpu
   memory              = var.ecs_memory
   desired_count_dev   = var.ecs_desired_count_dev

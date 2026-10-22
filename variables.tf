@@ -104,6 +104,16 @@ variable "container_image" {
   default     = "public.ecr.aws/docker/library/node:20-alpine"
 }
 
+variable "container_command" {
+  description = "Startup command for the ECS container. Defaults to a lightweight HTTP server on app_port so default node:20-alpine does not exit immediately and passes ALB health checks (/health). Set to [] when deploying custom built images."
+  type        = list(string)
+  default = [
+    "node",
+    "-e",
+    "const http = require('http'); const server = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ status: 'ok', service: 'AutoAWS Backend', environment: process.env.ENVIRONMENT || 'dev', path: req.url })); }); server.listen(process.env.PORT || 3000, () => console.log('HTTP Health server listening on port ' + (process.env.PORT || 3000)));"
+  ]
+}
+
 variable "ecs_cpu" {
   description = "Fargate CPU units (256, 512, 1024, 2048)"
   type        = number

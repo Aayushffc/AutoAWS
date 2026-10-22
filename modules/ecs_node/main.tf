@@ -319,74 +319,77 @@ resource "aws_ecs_task_definition" "dev" {
   task_role_arn            = aws_iam_role.task_role.arn
 
   container_definitions = jsonencode([
-    {
-      name      = "${var.project_name}-dev-backend"
-      image     = var.container_image
-      essential = true
+    merge(
+      {
+        name      = "${var.project_name}-dev-backend"
+        image     = var.container_image
+        essential = true
 
-      portMappings = [
-        {
-          containerPort = var.app_port
-          hostPort      = var.app_port
-          protocol      = "tcp"
-        }
-      ]
+        portMappings = [
+          {
+            containerPort = var.app_port
+            hostPort      = var.app_port
+            protocol      = "tcp"
+          }
+        ]
 
-      environment = [
-        {
-          name  = "NODE_ENV"
-          value = "development"
-        },
-        {
-          name  = "PORT"
-          value = tostring(var.app_port)
-        },
-        {
-          name  = "ENVIRONMENT"
-          value = "dev"
-        },
-        {
-          name  = "DATABASE_SECRET_ARN"
-          value = var.secrets_manager_arn
-        },
-        {
-          name  = "S3_BUCKET_NAME"
-          value = var.s3_bucket_name
-        }
-      ]
+        environment = [
+          {
+            name  = "NODE_ENV"
+            value = "development"
+          },
+          {
+            name  = "PORT"
+            value = tostring(var.app_port)
+          },
+          {
+            name  = "ENVIRONMENT"
+            value = "dev"
+          },
+          {
+            name  = "DATABASE_SECRET_ARN"
+            value = var.secrets_manager_arn
+          },
+          {
+            name  = "S3_BUCKET_NAME"
+            value = var.s3_bucket_name
+          }
+        ]
 
-      secrets = [
-        {
-          name      = "DATABASE_URL"
-          valueFrom = "${var.secrets_manager_arn}:DATABASE_URL::"
-        },
-        {
-          name      = "DB_HOST"
-          valueFrom = "${var.secrets_manager_arn}:DB_HOST::"
-        },
-        {
-          name      = "DB_USER"
-          valueFrom = "${var.secrets_manager_arn}:DB_USER::"
-        },
-        {
-          name      = "DB_PASSWORD"
-          valueFrom = "${var.secrets_manager_arn}:DB_PASSWORD::"
-        },
-        {
-          name      = "DB_NAME"
-          valueFrom = "${var.secrets_manager_arn}:DB_NAME::"
-        }
-      ]
+        secrets = [
+          {
+            name      = "DATABASE_URL"
+            valueFrom = "${var.secrets_manager_arn}:DATABASE_URL::"
+          },
+          {
+            name      = "DB_HOST"
+            valueFrom = "${var.secrets_manager_arn}:DB_HOST::"
+          },
+          {
+            name      = "DB_USER"
+            valueFrom = "${var.secrets_manager_arn}:DB_USER::"
+          },
+          {
+            name      = "DB_PASSWORD"
+            valueFrom = "${var.secrets_manager_arn}:DB_PASSWORD::"
+          },
+          {
+            name      = "DB_NAME"
+            valueFrom = "${var.secrets_manager_arn}:DB_NAME::"
+          }
+        ]
 
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.dev.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "ecs"
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            "awslogs-group"         = aws_cloudwatch_log_group.dev.name
+            "awslogs-region"        = var.aws_region
+            "awslogs-stream-prefix" = "ecs"
+          }
         }
-      }
-    }
+      },
+      length(var.container_command) > 0 ? { command = var.container_command } : {}
+    )
   ])
 
   tags = merge(
@@ -408,74 +411,77 @@ resource "aws_ecs_task_definition" "prod" {
   task_role_arn            = aws_iam_role.task_role.arn
 
   container_definitions = jsonencode([
-    {
-      name      = "${var.project_name}-prod-backend"
-      image     = var.container_image
-      essential = true
+    merge(
+      {
+        name      = "${var.project_name}-prod-backend"
+        image     = var.container_image
+        essential = true
 
-      portMappings = [
-        {
-          containerPort = var.app_port
-          hostPort      = var.app_port
-          protocol      = "tcp"
-        }
-      ]
+        portMappings = [
+          {
+            containerPort = var.app_port
+            hostPort      = var.app_port
+            protocol      = "tcp"
+          }
+        ]
 
-      environment = [
-        {
-          name  = "NODE_ENV"
-          value = "production"
-        },
-        {
-          name  = "PORT"
-          value = tostring(var.app_port)
-        },
-        {
-          name  = "ENVIRONMENT"
-          value = "prod"
-        },
-        {
-          name  = "DATABASE_SECRET_ARN"
-          value = var.secrets_manager_arn
-        },
-        {
-          name  = "S3_BUCKET_NAME"
-          value = var.s3_bucket_name
-        }
-      ]
+        environment = [
+          {
+            name  = "NODE_ENV"
+            value = "production"
+          },
+          {
+            name  = "PORT"
+            value = tostring(var.app_port)
+          },
+          {
+            name  = "ENVIRONMENT"
+            value = "prod"
+          },
+          {
+            name  = "DATABASE_SECRET_ARN"
+            value = var.secrets_manager_arn
+          },
+          {
+            name  = "S3_BUCKET_NAME"
+            value = var.s3_bucket_name
+          }
+        ]
 
-      secrets = [
-        {
-          name      = "DATABASE_URL"
-          valueFrom = "${var.secrets_manager_arn}:DATABASE_URL::"
-        },
-        {
-          name      = "DB_HOST"
-          valueFrom = "${var.secrets_manager_arn}:DB_HOST::"
-        },
-        {
-          name      = "DB_USER"
-          valueFrom = "${var.secrets_manager_arn}:DB_USER::"
-        },
-        {
-          name      = "DB_PASSWORD"
-          valueFrom = "${var.secrets_manager_arn}:DB_PASSWORD::"
-        },
-        {
-          name      = "DB_NAME"
-          valueFrom = "${var.secrets_manager_arn}:DB_NAME::"
-        }
-      ]
+        secrets = [
+          {
+            name      = "DATABASE_URL"
+            valueFrom = "${var.secrets_manager_arn}:DATABASE_URL::"
+          },
+          {
+            name      = "DB_HOST"
+            valueFrom = "${var.secrets_manager_arn}:DB_HOST::"
+          },
+          {
+            name      = "DB_USER"
+            valueFrom = "${var.secrets_manager_arn}:DB_USER::"
+          },
+          {
+            name      = "DB_PASSWORD"
+            valueFrom = "${var.secrets_manager_arn}:DB_PASSWORD::"
+          },
+          {
+            name      = "DB_NAME"
+            valueFrom = "${var.secrets_manager_arn}:DB_NAME::"
+          }
+        ]
 
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.prod.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "ecs"
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            "awslogs-group"         = aws_cloudwatch_log_group.prod.name
+            "awslogs-region"        = var.aws_region
+            "awslogs-stream-prefix" = "ecs"
+          }
         }
-      }
-    }
+      },
+      length(var.container_command) > 0 ? { command = var.container_command } : {}
+    )
   ])
 
   tags = merge(

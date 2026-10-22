@@ -36,8 +36,8 @@ on:
           - destroy
 
 permissions:
-  id-token: write   # Required for AWS OIDC authentication
-  contents: read    # Required to checkout code
+  id-token: write # Required for AWS OIDC authentication
+  contents: read # Required to checkout code
   pull-requests: write # Required to comment PR plan
 
 jobs:
