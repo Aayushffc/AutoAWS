@@ -41,8 +41,9 @@ variable "ecs_sg_id" {
 }
 
 variable "secrets_manager_arn" {
-  description = "ARN of the Secrets Manager secret for database credentials"
+  description = "ARN of the Secrets Manager secret for database credentials (optional if RDS disabled)"
   type        = string
+  default     = ""
 }
 
 variable "s3_bucket_arn" {

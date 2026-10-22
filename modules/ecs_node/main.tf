@@ -102,14 +102,17 @@ resource "aws_iam_role_policy_attachment" "execution_standard" {
 }
 
 data "aws_iam_policy_document" "execution_secrets" {
-  statement {
-    sid    = "AllowReadDatabaseSecret"
-    effect = "Allow"
-    actions = [
-      "secretsmanager:GetSecretValue",
-      "secretsmanager:DescribeSecret"
-    ]
-    resources = [var.secrets_manager_arn]
+  dynamic "statement" {
+    for_each = var.secrets_manager_arn != "" ? [1] : []
+    content {
+      sid    = "AllowReadDatabaseSecret"
+      effect = "Allow"
+      actions = [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ]
+      resources = [var.secrets_manager_arn]
+    }
   }
 
   statement {
@@ -356,7 +359,7 @@ resource "aws_ecs_task_definition" "dev" {
           }
         ]
 
-        secrets = [
+        secrets = var.secrets_manager_arn != "" ? [
           {
             name      = "DATABASE_URL"
             valueFrom = "${var.secrets_manager_arn}:DATABASE_URL::"
@@ -377,7 +380,7 @@ resource "aws_ecs_task_definition" "dev" {
             name      = "DB_NAME"
             valueFrom = "${var.secrets_manager_arn}:DB_NAME::"
           }
-        ]
+        ] : []
 
         logConfiguration = {
           logDriver = "awslogs"
@@ -448,7 +451,7 @@ resource "aws_ecs_task_definition" "prod" {
           }
         ]
 
-        secrets = [
+        secrets = var.secrets_manager_arn != "" ? [
           {
             name      = "DATABASE_URL"
             valueFrom = "${var.secrets_manager_arn}:DATABASE_URL::"
@@ -469,7 +472,7 @@ resource "aws_ecs_task_definition" "prod" {
             name      = "DB_NAME"
             valueFrom = "${var.secrets_manager_arn}:DB_NAME::"
           }
-        ]
+        ] : []
 
         logConfiguration = {
           logDriver = "awslogs"
