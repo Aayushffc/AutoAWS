@@ -3,8 +3,13 @@
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
+*.tfplan
 
 # Local secrets & configs
 terraform.tfvars
 *.auto.tfvars
 *.tfvars.json
+
+# Node modules
+node_modules/
+npm-debug.log*

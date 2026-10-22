@@ -1,0 +1,27 @@
+{
+  "name": "autoaws",
+  "version": "1.0.0",
+  "description": "Production-Ready Modular AWS Infrastructure Provisioner in Terraform",
+  "main": "bin/autoaws.js",
+  "bin": {
+    "autoaws": "./bin/autoaws.js"
+  },
+  "scripts": {
+    "onboard": "node bin/autoaws.js onboard",
+    "start": "node bin/autoaws.js"
+  },
+  "keywords": [
+    "aws",
+    "terraform",
+    "ecs",
+    "fargate",
+    "rds",
+    "devops"
+  ],
+  "author": "Aayushffc",
+  "license": "ISC",
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "picocolors": "^1.1.1"
+  }
+}

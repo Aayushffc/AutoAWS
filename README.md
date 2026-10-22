@@ -1,310 +1,137 @@
 # AutoAWS
 
-> **Production-Ready Modular AWS Infrastructure Provisioner in Terraform**  
-> Architected for Node.js backends on AWS ECS Fargate (`dev` & `prod`), RDS PostgreSQL 16, S3 + CloudFront OAC, conditional Next.js AWS Amplify frontend, and zero-key GitHub Actions CI/CD via IAM OIDC.
+> **Cost-Optimized, Production-Grade AWS Infrastructure Engine in Terraform**  
+> Architected for Dual-Container Node.js backends (`backend-api-container` + `backend-worker-container`) on AWS ECS Fargate, Zero-NAT Cost Optimization, Application Load Balancer with TLS 1.3/1.2 and Swagger `/api-docs/*` protection, PostgreSQL in isolated subnets, hierarchical Secrets Manager (`<project>/<env>/app_secrets`), and keyless GitHub Actions CI/CD.
 
 ---
 
-## High-Level Architecture
+## 1. Cost-Optimized Zero-NAT Architecture
 
-```mermaid
-graph TD
-    User([Internet Users / Clients])
-    
-    subgraph CDN & Storage
-        CF[CloudFront CDN Distribution]
-        S3[(Private S3 Media Bucket)]
-        OAC[Origin Access Control - SigV4]
-    end
+### Why Omit the NAT Gateway?
+In traditional AWS architectures, ECS tasks reside in private subnets and require an **AWS NAT Gateway** ($32.85/month base + data processing fees) to pull Docker images from ECR, fetch credentials from AWS Secrets Manager, and stream logs to CloudWatch.
 
-    subgraph VPC [Custom VPC: 10.0.0.0/16]
-        subgraph Public Subnets [Multi-AZ Public Subnets]
-            ALB[Application Load Balancer]
-            NAT[Single Shared NAT Gateway]
-        end
+AutoAWS eliminates the NAT Gateway by default (`enable_nat_gateway = false`), deploying ECS tasks directly into public subnets with `assign_public_ip = true`:
+- **Outbound Traffic:** Flows directly through the free Internet Gateway (IGW) for ECR pulls, Secrets Manager calls, and third-party APIs (Stripe, SendGrid, etc.).
+- **Cost:** AWS charges $0.005/hr for public IPv4 (~$3.65/month per running task) vs. **$32.85/month** for a single NAT Gateway—saving **~$29.20/month per environment** (~$60–$90/month across dev/staging/prod).
 
-        subgraph Private Subnets [Multi-AZ Private Subnets]
-            ECS_DEV[ECS Fargate: Dev Service]
-            ECS_PROD[ECS Fargate: Prod Service]
-            RDS[(RDS PostgreSQL 16)]
-        end
-    end
+### Is It Secure? (Zero-Trust Security Group Chaining)
+Yes. AWS Security Groups are stateful firewalls. Fargate tasks in the public subnet block all inbound traffic from the public internet:
 
-    subgraph Security & Config
-        SM[AWS Secrets Manager]
-        CW[CloudWatch Logs: /ecs/dev & /ecs/prod]
-        ECR[ECR Private Repository: autoaws-backend]
-        OIDC[GitHub Actions IAM OIDC Role]
-    end
-
-    User -->|HTTPS :443| CF
-    CF -->|Strict OAC SigV4| S3
-    User -->|HTTP :80 / HTTPS :443| ALB
-    ALB -->|/dev*| ECS_DEV
-    ALB -->|Default /| ECS_PROD
-    ECS_DEV -->|Port 5432| RDS
-    ECS_PROD -->|Port 5432| RDS
-    ECS_DEV -->|Direct Upload| S3
-    ECS_PROD -->|Direct Upload| S3
-    ECS_DEV -->|Fetch Secret| SM
-    ECS_PROD -->|Fetch Secret| SM
-    ECS_DEV -->|Push Logs| CW
-    ECS_PROD -->|Push Logs| CW
-    OIDC -.->|Deploy Image & Update| ECR
-    OIDC -.->|Update Services| ECS_PROD
+```
+[ Public Internet (0.0.0.0/0) ]
+              │
+              ▼ (Inbound Ports 80 & 443 only)
+┌──────────────────────────────────────┐
+│  ALB Security Group (ALB-SG)         │
+└──────────────────────────────────────┘
+              │
+              ▼ (Inbound Port 3000 STRICTLY from ALB-SG ID - 0.0.0.0/0 BLOCKED)
+┌──────────────────────────────────────┐
+│  ECS Security Group (ECS-SG)         │  assign_public_ip = true
+└──────────────────────────────────────┘  (Egress 0.0.0.0/0 to IGW)
+              │
+              ▼ (Inbound Port 5432 STRICTLY from ECS-SG ID)
+┌──────────────────────────────────────┐
+│  RDS Security Group (RDS-SG)         │  publicly_accessible = false
+└──────────────────────────────────────┘  (Isolated Database Subnets, No IGW Route)
 ```
 
 ---
 
-## Security Group Chaining (Zero-Trust Perimeter)
+## 2. Application Load Balancer & Swagger Security
 
-Network traffic is strictly controlled using security group referencing rather than raw CIDR blocks:
-
-```
-[ Internet (0.0.0.0/0) ]
-          │ Inbound 80 / 443
-          ▼
-┌────────────────────────┐
-│  ALB Security Group    │  autoaws-dev-alb-sg
-└────────────────────────┘
-          │ Inbound port 3000 ONLY from alb-sg.id
-          ▼
-┌────────────────────────┐
-│  ECS Security Group    │  autoaws-dev-ecs-sg
-└────────────────────────┘
-          │ Inbound port 5432 ONLY from ecs-sg.id
-          ▼
-┌────────────────────────┐
-│  RDS Security Group    │  autoaws-dev-rds-sg (Zero outbound egress)
-└────────────────────────┘
-```
+The ALB module enforces:
+1. **HTTP 80 Listener:** Automatic `HTTP_301` redirect to `HTTPS://#{host}:443/#{path}?#{query}`.
+2. **HTTPS 443 Listener:** Modern TLS policy `ELBSecurityPolicy-TLS13-1-2-Res-2021-06` with default forwarding to `<project>-<env>-tg`. Turnkey auto-generated ACM certificate fallback if no external ACM ARN is provided.
+3. **Swagger Protection Rules for `/api-docs/*`:**
+   - **Priority 10 (`Swagger-Rules`):** Path `/api-docs/*` AND Source IP matching configurable CIDR whitelist -> Forward to target group.
+   - **Priority 20:** Path `/api-docs/*` -> Fixed response `403 Forbidden` (`text/plain`).
+   - **Default Action:** Catch-all traffic -> Forward to target group.
 
 ---
 
-## Repository Structure
+## 3. Hierarchical Secrets Manager Convention
+
+All environments (`dev`, `staging`, `production`) follow a strict hierarchical naming convention:
+- **Secret Path:** `<project>/<env>/app_secrets` (e.g. `backend/dev/app_secrets`, `backend/prod/app_secrets`).
+- **ECS Injection:** ECS Task Definition maps the entire secret payload into the container environment variable `APP_SECRETS` using `secrets.valueFrom = <secret_arn>`.
+
+---
+
+## 4. Dual-Container ECS Fargate Task Definition
+
+Co-locates two containers within the same task:
+1. **`backend-api-container` (Essential):**
+   - Port 3000 (`containerPort: 3000`, `hostPort: 3000`, `appProtocol: http`).
+   - Command: `["sh", "-c", "node dist/server.js"]`
+   - Health Check: Native Node.js HTTP ping to `http://127.0.0.1:3000/health`.
+   - CloudWatch Logs: `/ecs/<project>-<env>-api` (auto-created).
+2. **`backend-worker-container` (Non-Essential):**
+   - Command: `["node", "dist/worker.js"]`
+   - Starts **only** after the API container is healthy:
+     ```json
+     "dependsOn": [{ "containerName": "backend-api-container", "condition": "HEALTHY" }]
+     ```
+   - CloudWatch Logs: `/ecs/<project>-<env>-worker`.
+
+### Resource Allocation Split:
+| Environment | Total Task | API Container | Worker Container | Desired Tasks |
+| :--- | :--- | :--- | :--- | :--- |
+| **dev** | 512 CPU / 1024 MB | 384 CPU / 768 MB | 128 CPU / 256 MB | 1 |
+| **staging** | 512 CPU / 1024 MB | 384 CPU / 768 MB | 128 CPU / 256 MB | 1 |
+| **production** | 1024 CPU / 2048 MB | 768 CPU / 1536 MB | 256 CPU / 512 MB | 2 (Multi-AZ) |
+
+---
+
+## 5. Repository Structure
 
 ```text
 AutoAWS/
-├── .github/
-│   ├── CODEOWNERS
-│   └── workflows/
-│       └── provision.yml           # GitHub Actions automated plan/apply workflow
+├── bin/
+│   └── autoaws.js               # Interactive CLI onboarding engine (@clack/prompts)
+├── clients/
+│   ├── tapsy-dev.tfvars.json    # Dev client configuration
+│   ├── tapsy-prod.tfvars.json   # Production client configuration
+│   └── pulse-staging.tfvars.json
 ├── modules/
-│   ├── networking/                 # VPC, IGW, NAT GW, multi-AZ subnets, chained SGs
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── database_secrets/           # RDS PostgreSQL 16, random password, Secrets Manager
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── storage_cdn/                # Private S3 bucket, CloudFront OAC, 4-way public block
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── ecs_node/                   # ECR, CloudWatch, ALB, Fargate task defs & services
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── amplify_nextjs/             # Conditional Next.js SSR Amplify app & branch
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   └── github_repos/               # Keyless IAM OIDC Provider & GitHub Actions deploy role
-│       ├── main.tf
-│       ├── variables.tf
-│       └── outputs.tf
-├── .gitignore                      # Gitignores local state and *.tfvars
-├── main.tf                         # Root orchestrator wiring all modules
-├── provider.tf                     # AWS & Random providers with default resource tags
-├── variables.tf                    # Root input variables with defaults and validations
-├── outputs.tf                      # Core output values (ALB DNS, ECR URL, RDS, etc.)
-├── terraform.tfvars                # Local configuration values (gitignored)
-├── terraform.tfvars.example        # Reference configuration template
-└── README.md                       # Infrastructure documentation
+│   ├── vpc/                     # IGW, public subnets, isolated DB subnets, chained SGs, zero-NAT
+│   ├── alb/                     # ALB, HTTPS 301 redirect, TLS 1.3/1.2, Swagger IP whitelist rules
+│   ├── ecs/                     # Dual-container task definition, Fargate service, ECR, CloudWatch, IAM
+│   ├── rds/                     # PostgreSQL 16 in isolated subnets + <project>/<env>/app_secrets
+│   ├── storage_cdn/             # Private S3 media bucket + CloudFront OAC SigV4
+│   ├── amplify_nextjs/          # Optional Next.js SSR frontend
+│   └── github_repos/            # Keyless GitHub Actions IAM OIDC deployer role
+├── provider.tf                  # AWS, Random, TLS providers
+├── variables.tf                 # Parameterized root variables with slug & environment validations
+├── main.tf                      # Root infrastructure orchestrator
+├── outputs.tf                   # Comprehensive infrastructure outputs
+├── terraform.tfvars             # Active configuration file
+└── terraform.tfvars.example     # Reference template
 ```
 
 ---
 
-## Module Summary
+## 6. Quick Start
 
-| Module | Core Resources Created | Key Features |
-| :--- | :--- | :--- |
-| **`modules/networking`** | `aws_vpc`, `aws_subnet`, `aws_nat_gateway`, `aws_security_group` | Multi-AZ (2 Public, 2 Private), single shared NAT Gateway for cost savings, strict SG chaining. |
-| **`modules/database_secrets`** | `aws_db_instance`, `aws_db_subnet_group`, `aws_secretsmanager_secret` | PostgreSQL 16, 32-char auto-generated password without special chars, JSON connection string stored in Secrets Manager. |
-| **`modules/storage_cdn`** | `aws_s3_bucket`, `aws_cloudfront_distribution`, `aws_cloudfront_origin_access_control` | 100% private S3 bucket, CloudFront OAC SigV4, strict S3 bucket policy allowing ONLY CloudFront. |
-| **`modules/ecs_node`** | `aws_lb`, `aws_ecs_cluster`, `aws_ecs_service`, `aws_ecs_task_definition`, `aws_ecr_repository` | Fargate dev & prod tasks, path-based ALB routing (`/dev*` -> dev, default -> prod), ECR lifecycle policy, CloudWatch logs. |
-| **`modules/amplify_nextjs`** | `aws_amplify_app`, `aws_amplify_branch` | Conditional (`enable_amplify = false` provisions 0 resources), Next.js SSR Web Compute platform. |
-| **`modules/github_repos`** | `aws_iam_openid_connect_provider`, `aws_iam_role`, `aws_iam_policy` | Keyless CI/CD authentication via GitHub OIDC with collision prevention for existing AWS accounts. |
-
----
-
-## Prerequisites
-
-- **Terraform CLI**: `v1.5.0` or later (`terraform version`)
-- **AWS Account & IAM Permissions**: Administrative access or appropriate permissions to create VPC, RDS, ECS, IAM, S3, and CloudFront resources.
-- **AWS Credentials**: Configured via environment variables, `~/.aws/credentials`, or the AWS CLI.
-
----
-
-## Quickstart Guide
-
-### 1. Set Your AWS Credentials
-
-Choose one of the following methods in your terminal:
-
-**Option A: PowerShell Environment Variables (Fastest)**
-
-```powershell
-$env:AWS_ACCESS_KEY_ID     = "AKIA..."
-$env:AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-$env:AWS_DEFAULT_REGION    = "ap-south-1"
-
-# If using temporary credentials / AWS SSO / Academy, also set:
-# $env:AWS_SESSION_TOKEN   = "IQoJb3JpZ2luX2VjE..."
+### 1. Interactive Onboarding Wizard
+Run the CLI wizard to size workloads, calculate live cost estimates, and generate client configurations:
+```bash
+npm run onboard
+# or
+node bin/autoaws.js onboard
 ```
 
-**Option B: Standard AWS CLI / Credentials File**
-
-```powershell
-aws configure
-# Enter Access Key, Secret Key, and Region (e.g., ap-south-1)
-```
-
----
-
-### 2. Configure `terraform.tfvars`
-
-Edit [`terraform.tfvars`](file:///d:/AutoAWS/terraform.tfvars) to customize your deployment:
-
-```hcl
-aws_region   = "ap-south-1"
-project_name = "autoaws"
-environment  = "dev" # "dev" or "prod"
-
-# Keep true for outbound internet from private tasks, or false for $0 NAT cost in testing
-enable_nat_gateway = true
-
-# Set false if your AWS account ALREADY has a GitHub OIDC provider registered
-create_github_oidc_provider = true
-
-github_org  = "Aayushffc"
-github_repo = "AutoAWS"
-
-# Enable AWS Amplify Next.js frontend if needed
-enable_amplify = false
-```
-
----
-
-### 3. Initialize & Validate Terraform
-
-```powershell
-# Initialize provider plugins and local modules
+### 2. Manual Provisioning via Terraform
+```bash
+# 1. Initialize working directory
 terraform init
 
-# Validate configuration syntax and types
-terraform validate
+# 2. Select or create environment workspace
+terraform workspace select -or-create dev
+
+# 3. Generate plan
+terraform plan -var-file=terraform.tfvars -out=tfplan
+
+# 4. Apply to AWS
+terraform apply "tfplan"
 ```
-
----
-
-### 4. Review Plan & Apply
-
-```powershell
-# Review proposed AWS resource changes
-terraform plan
-
-# Apply infrastructure deployment
-terraform apply
-```
-
-Upon successful completion, Terraform outputs all critical endpoints and credentials:
-
-```text
-Outputs:
-
-alb_dns_name           = "autoaws-alb-123456789.ap-south-1.elb.amazonaws.com"
-ecr_repository_url     = "123456789012.dkr.ecr.ap-south-1.amazonaws.com/autoaws-backend"
-rds_endpoint           = "autoaws-dev-postgres.c123456789.ap-south-1.rds.amazonaws.com:5432"
-secrets_manager_arn    = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:/autoaws/database-xxxxxx"
-cloudfront_domain_name = "d123456abcdef8.cloudfront.net"
-s3_bucket_name         = "autoaws-media-dev"
-github_actions_role_arn = "arn:aws:iam::123456789012:role/autoaws-dev-github-actions-deploy-role"
-```
-
----
-
-## Important Architectural Solutions
-
-### 1. ECS Health Check Crash Loop Resolution
-
-- **Problem**: Raw `public.ecr.aws/docker/library/node:20-alpine` runs an interactive Node REPL and immediately stops in headless Fargate containers, triggering endless task restart loops and ALB `/health` failures.
-- **Solution**: AutoAWS includes a default `container_command` that spins up a lightweight inline Node.js HTTP server on port 3000 responding with `HTTP 200 OK` on `/health` and `/`.
-- **Switching to Your Real Backend**: Once your application Docker image is pushed to ECR:
-
-  ```hcl
-  # In terraform.tfvars:
-  container_image   = "<your-account-id>.dkr.ecr.ap-south-1.amazonaws.com/autoaws-backend:latest"
-  container_command = [] # Disables inline mock server; uses your Dockerfile ENTRYPOINT / CMD
-  ```
-
-### 2. AWS IAM OIDC Provider Collision Prevention
-
-- **Problem**: AWS IAM only allows **one** OIDC provider for `token.actions.githubusercontent.com` per account. Duplicate creation fails with `EntityAlreadyExists`.
-- **Solution**: If your AWS account already has an OIDC provider, set `create_github_oidc_provider = false` in `terraform.tfvars`. The deployment role will automatically attach to the existing provider ARN without error.
-
-### 3. NAT Gateway Running Cost Optimization
-
-- **Problem**: NAT Gateways cost ~$32/month (~$0.045/hr) each even when idle.
-- **Solution**: AutoAWS uses **one single shared NAT Gateway** across public subnets instead of one per AZ. For temporary test sandboxes, set `enable_nat_gateway = false` in `terraform.tfvars` for a **$0 NAT bill**.
-
----
-
-## Deploying Your Own Backend Application
-
-1. **Authenticate Docker with ECR**:
-
-   ```powershell
-   aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin <your-account-id>.dkr.ecr.ap-south-1.amazonaws.com
-   ```
-
-2. **Build and Tag Your Docker Image**:
-
-   ```powershell
-   docker build -t autoaws-backend:latest .
-   docker tag autoaws-backend:latest <your-account-id>.dkr.ecr.ap-south-1.amazonaws.com/autoaws-backend:latest
-   ```
-
-3. **Push to ECR**:
-
-   ```powershell
-   docker push <your-account-id>.dkr.ecr.ap-south-1.amazonaws.com/autoaws-backend:latest
-   ```
-
-4. **Update `terraform.tfvars`**:
-
-   ```hcl
-   container_image   = "<your-account-id>.dkr.ecr.ap-south-1.amazonaws.com/autoaws-backend:latest"
-   container_command = []
-   ```
-
-   Then run `terraform apply`.
-
----
-
-## Teardown / Destroy
-
-To prevent unexpected AWS charges when you are done testing:
-
-```powershell
-terraform destroy
-```
-
-*Review the resources to be deleted and type `yes` to confirm.*
-
----
-
-## License
-
-Internal infrastructure template maintained by `@Aayushffc`.

@@ -1,85 +1,71 @@
 # ==================================================================================================
-# AutoAWS Infrastructure - terraform.tfvars.example
-# Copy this file to terraform.tfvars and customize for your project
+# AutoAWS Infrastructure - Example Variables (terraform.tfvars.example)
 # ==================================================================================================
 
 # --------------------------------------------------------------------------------------------------
-# AWS Region & Project Setup
+# 1. Project & Environment Identifiers
 # --------------------------------------------------------------------------------------------------
-aws_region   = "ap-south-1"
-project_name = "autoaws"
-environment  = "dev" # "dev" or "prod"
+aws_region   = "us-west-1"
+project_name = "backend"
+cluster_name = "Tapsy"
+environment  = "dev" # "dev", "staging", or "production"
 
 # --------------------------------------------------------------------------------------------------
-# Networking Configuration & Cost Optimization
+# 2. Cost-Optimized Zero-NAT Networking ($32.85/mo Saved)
 # --------------------------------------------------------------------------------------------------
-vpc_cidr             = "10.0.0.0/16"
-public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
-private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
-app_port             = 3000
-
-# COST CATCH: An AWS NAT Gateway costs ~$32/month (~$0.045/hr) plus data transfer even when idle.
-# - The networking module provisions exactly ONE shared NAT Gateway (not one per AZ) for cost efficiency.
-# - For ephemeral dev sandboxes or non-critical testing, set enable_nat_gateway = false to incur $0 NAT cost.
-# - Remember to run `terraform destroy` when finished testing so NAT Gateway does not run up an idle bill.
-enable_nat_gateway = true
+vpc_cidr              = "10.0.0.0/16"
+public_subnet_cidrs   = ["10.0.1.0/24", "10.0.2.0/24"]
+database_subnet_cidrs = ["10.0.21.0/24", "10.0.22.0/24"]
+container_port        = 3000
+enable_nat_gateway    = false
 
 # --------------------------------------------------------------------------------------------------
-# PostgreSQL Database Configuration
+# 3. Application Load Balancer & Swagger Security
 # --------------------------------------------------------------------------------------------------
-db_instance_class    = "db.t4g.micro"
-db_engine_version    = "16"
-db_name              = "appdb"
-db_username          = "postgres"
-db_allocated_storage = 20
-
-# --------------------------------------------------------------------------------------------------
-# ECS Fargate Configuration & Health Checks
-# --------------------------------------------------------------------------------------------------
-# ECS TASK HEALTH CHECK CATCH:
-# Raw public.ecr.aws/docker/library/node:20-alpine has an interactive REPL default entrypoint
-# and exits immediately in a non-interactive Fargate container, causing crash loops and ALB
-# /health check timeouts.
-#
-# Solution implemented:
-# `container_command` defaults to a lightweight inline Node.js HTTP server listening on app_port (3000)
-# and responding to /health with HTTP 200 OK.
-# Once you build and push your actual backend application Docker image to ECR, set
-# `container_command = []` below so your Dockerfile's CMD / ENTRYPOINT runs normally.
-container_image = "public.ecr.aws/docker/library/node:20-alpine"
-
-container_command = [
-  "node",
-  "-e",
-  "const http = require('http'); const server = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ status: 'ok', service: 'AutoAWS Backend', environment: process.env.ENVIRONMENT || 'dev', path: req.url })); }); server.listen(process.env.PORT || 3000, () => console.log('HTTP Health server listening on port ' + (process.env.PORT || 3000)));"
+# Existing ACM Certificate ARN or leave empty ("") for auto-generated self-signed cert:
+certificate_arn           = ""
+enable_swagger_protection = true
+swagger_whitelist_ips = [
+  "202.89.67.216/32",
+  "122.168.85.82/32",
+  "202.89.77.27/32",
+  "122.168.82.7/32",
+  "122.168.81.182/32"
 ]
 
-ecs_cpu                = 256
-ecs_memory             = 512
-ecs_desired_count_dev  = 1
-ecs_desired_count_prod = 2
+# --------------------------------------------------------------------------------------------------
+# 4. Amazon RDS PostgreSQL (Isolated Database Subnets)
+# --------------------------------------------------------------------------------------------------
+enable_rds            = true
+rds_instance_class    = "db.t4g.micro"
+db_engine_version     = "16"
+db_name               = "appdb"
+db_username           = "postgres"
+rds_allocated_storage = 20
 
 # --------------------------------------------------------------------------------------------------
-# AWS Amplify (Next.js SSR Frontend)
+# 5. Dual-Container ECS Fargate Task Definition (API + Worker)
 # --------------------------------------------------------------------------------------------------
-# Zero Amplify resources are created when enable_amplify is false.
-enable_amplify         = false
-amplify_repository_url = "" # e.g. "https://github.com/my-org/my-nextjs-app"
-amplify_github_token   = "" # Personal Access Token with repo scope
-amplify_branch         = "main"
+container_image   = "public.ecr.aws/docker/library/node:20-alpine"
+api_command       = ["sh", "-c", "node dist/server.js"]
+worker_command    = ["node", "dist/worker.js"]
+ecs_desired_count = 1
+ecs_task_cpu      = null # null auto-selects 512 for dev/staging, 1024 for prod
+ecs_task_memory   = null # null auto-selects 1024 for dev/staging, 2048 for prod
 
 # --------------------------------------------------------------------------------------------------
-# GitHub Actions OIDC CI/CD Integration
+# 6. CI/CD & Deployer Credentials
 # --------------------------------------------------------------------------------------------------
-enable_github_oidc = true
-
-# IAM OIDC COLLISION CATCH:
-# AWS IAM allows ONLY ONE GitHub OIDC identity provider (token.actions.githubusercontent.com) per account.
-# - If you have ALREADY created a GitHub OIDC provider in this AWS account for another project:
-#   set `create_github_oidc_provider = false` so Terraform references the existing provider ARN
-#   instead of trying to create a duplicate (preventing EntityAlreadyExists error).
-# - If this is a fresh account without a GitHub OIDC provider, keep `create_github_oidc_provider = true`.
+enable_github_deployer_user = true
+enable_github_oidc          = true
 create_github_oidc_provider = true
+github_org                  = "Aayushffc"
+github_repo                 = "AutoAWS"
 
-github_org  = "Aayushffc"
-github_repo = "AutoAWS"
+# --------------------------------------------------------------------------------------------------
+# 7. Frontend (AWS Amplify Next.js SSR)
+# --------------------------------------------------------------------------------------------------
+enable_amplify         = false
+amplify_repository_url = ""
+amplify_github_token   = ""
+amplify_branch         = "main"
