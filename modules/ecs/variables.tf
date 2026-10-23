@@ -66,20 +66,14 @@ variable "api_command" {
   default     = ["sh", "-c", "node dist/server.js"]
 }
 
-variable "worker_command" {
-  description = "Startup command for backend-worker-container"
-  type        = list(string)
-  default     = ["node", "dist/worker.js"]
-}
-
 variable "task_cpu" {
-  description = "Total task CPU allocation (null to use environment default: 512 for dev/staging, 1024 for prod)"
+  description = "Total task CPU allocation in units (256 = 0.25 vCPU, 512 = 0.5 vCPU, 1024 = 1.0 vCPU). Defaults to 256 for dev/staging and 512 for prod."
   type        = number
   default     = null
 }
 
 variable "task_memory" {
-  description = "Total task memory allocation in MiB (null to use environment default: 1024 for dev/staging, 2048 for prod)"
+  description = "Total task memory allocation in MiB (512 = 0.5 GB, 1024 = 1.0 GB, 2048 = 2.0 GB). Defaults to 512 for dev/staging and 1024 for prod."
   type        = number
   default     = null
 }
@@ -88,6 +82,18 @@ variable "desired_count" {
   description = "Desired number of running ECS tasks (1 for dev/staging, min 2 for prod)"
   type        = number
   default     = 1
+}
+
+variable "enable_worker_container" {
+  description = "Whether to deploy a secondary background worker container alongside the API container (default: false)"
+  type        = bool
+  default     = false
+}
+
+variable "worker_command" {
+  description = "Docker command override for the background worker container"
+  type        = list(string)
+  default     = ["node", "dist/worker.js"]
 }
 
 variable "enable_github_deployer_user" {

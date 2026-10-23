@@ -6,8 +6,8 @@
 # 1. Project & Environment Identifiers
 # --------------------------------------------------------------------------------------------------
 aws_region   = "us-west-1"
-project_name = "backend"
-cluster_name = "Tapsy"
+project_name = "acme"
+cluster_name = "acme-cluster"
 environment  = "dev" # "dev", "staging", or "production"
 
 # --------------------------------------------------------------------------------------------------
@@ -22,7 +22,7 @@ enable_nat_gateway    = false
 # --------------------------------------------------------------------------------------------------
 # 3. Application Load Balancer & Swagger Security
 # --------------------------------------------------------------------------------------------------
-# Existing ACM Certificate ARN or leave empty ("") for auto-generated self-signed cert:
+# Leave empty ("") for auto-generated self-signed ACM cert, or provide existing ACM ARN:
 certificate_arn           = ""
 enable_swagger_protection = true
 swagger_whitelist_ips = [
@@ -44,14 +44,15 @@ db_username           = "postgres"
 rds_allocated_storage = 20
 
 # --------------------------------------------------------------------------------------------------
-# 5. Dual-Container ECS Fargate Task Definition (API + Worker)
+# 5. ECS Fargate Container Configuration (Single Container Default)
 # --------------------------------------------------------------------------------------------------
-container_image   = "public.ecr.aws/docker/library/node:20-alpine"
-api_command       = ["sh", "-c", "node dist/server.js"]
-worker_command    = ["node", "dist/worker.js"]
-ecs_desired_count = 1
-ecs_task_cpu      = null # null auto-selects 512 for dev/staging, 1024 for prod
-ecs_task_memory   = null # null auto-selects 1024 for dev/staging, 2048 for prod
+container_image         = "public.ecr.aws/docker/library/node:20-alpine"
+api_command             = ["sh", "-c", "node dist/server.js"]
+worker_command          = ["node", "dist/worker.js"]
+enable_worker_container = false
+ecs_desired_count       = 1
+ecs_task_cpu            = 256   # 256 units = 0.25 vCPU
+ecs_task_memory         = 512   # 512 MB = 0.5 GB RAM
 
 # --------------------------------------------------------------------------------------------------
 # 6. CI/CD & Deployer Credentials

@@ -44,8 +44,8 @@ output "api_log_group_name" {
 }
 
 output "worker_log_group_name" {
-  description = "Name of the CloudWatch log group for backend-worker-container"
-  value       = aws_cloudwatch_log_group.worker.name
+  description = "Name of the CloudWatch log group for backend-worker-container (if enabled)"
+  value       = var.enable_worker_container ? aws_cloudwatch_log_group.worker[0].name : "N/A (Worker Disabled)"
 }
 
 output "execution_role_arn" {

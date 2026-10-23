@@ -34,7 +34,7 @@ variable "client_name" {
 }
 
 variable "cluster_name" {
-  description = "Custom ECS cluster name (e.g. 'Tapsy'). If empty, defaults to '<project_name>-cluster'"
+  description = "Custom ECS cluster name (e.g. 'acme-cluster'). If empty, defaults to '<project_name>-cluster'"
   type        = string
   default     = ""
 }
@@ -87,7 +87,7 @@ variable "container_port" {
 # Application Load Balancer & Swagger Security
 # --------------------------------------------------------------------------------------------------
 variable "certificate_arn" {
-  description = "ARN of the ACM SSL/TLS certificate for HTTPS:443 listener (e.g. *.tapsy.app). If empty, a turnkey self-signed certificate is auto-generated so HTTPS is always available."
+  description = "ARN of the ACM SSL/TLS certificate for HTTPS:443 listener (e.g. *.acme.com). If empty, a turnkey self-signed certificate is auto-generated so HTTPS is always available."
   type        = string
   default     = ""
 }
@@ -159,19 +159,25 @@ variable "api_command" {
 }
 
 variable "worker_command" {
-  description = "Command for backend-worker-container"
+  description = "Command override for the secondary background worker container"
   type        = list(string)
   default     = ["node", "dist/worker.js"]
 }
 
+variable "enable_worker_container" {
+  description = "Whether to deploy a secondary background worker container alongside the API container (default: false)"
+  type        = bool
+  default     = false
+}
+
 variable "ecs_task_cpu" {
-  description = "Total task CPU allocation (null to use environment defaults: 512 for dev/staging, 1024 for prod)"
+  description = "Total task CPU allocation in units (256 = 0.25 vCPU, 512 = 0.5 vCPU, 1024 = 1.0 vCPU). Defaults to 256 for dev/staging and 512 for prod."
   type        = number
   default     = null
 }
 
 variable "ecs_task_memory" {
-  description = "Total task memory allocation in MiB (null to use environment defaults: 1024 for dev/staging, 2048 for prod)"
+  description = "Total task memory allocation in MiB (512 = 0.5 GB, 1024 = 1.0 GB, 2048 = 2.0 GB). Defaults to 512 for dev/staging and 1024 for prod."
   type        = number
   default     = null
 }

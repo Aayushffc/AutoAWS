@@ -37,7 +37,7 @@ variable "health_check_path" {
 }
 
 variable "certificate_arn" {
-  description = "ARN of the ACM SSL/TLS certificate for HTTPS:443 listener (e.g. *.tapsy.app). If empty, an auto-generated self-signed certificate is provisioned."
+  description = "ARN of the ACM SSL/TLS certificate for HTTPS:443 listener (e.g. *.acme.com). If empty, an auto-generated self-signed certificate is provisioned."
   type        = string
   default     = ""
 }

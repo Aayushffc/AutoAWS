@@ -1,22 +1,22 @@
 locals {
   is_prod = var.environment == "production" || var.environment == "prod"
 
-  total_cpu    = var.task_cpu != null ? var.task_cpu : (local.is_prod ? 1024 : 512)
-  total_memory = var.task_memory != null ? var.task_memory : (local.is_prod ? 2048 : 1024)
+  # Sizing defaults: 256 CPU (0.25 vCPU) and 512 MB (0.5 GB) for dev/staging; 512/1024 for prod
+  total_cpu    = var.task_cpu != null ? var.task_cpu : (local.is_prod ? 512 : 256)
+  total_memory = var.task_memory != null ? var.task_memory : (local.is_prod ? 1024 : 512)
 
-  # Exact resource split as specified:
-  # Dev/Staging: API 384 CPU / 768 MB; Worker 128 CPU / 256 MB (Total: 512 / 1024)
-  # Production:  API 768 CPU / 1536 MB; Worker 256 CPU / 512 MB (Total: 1024 / 2048)
-  api_cpu       = local.is_prod ? 768 : 384
-  api_memory    = local.is_prod ? 1536 : 768
-  worker_cpu    = local.is_prod ? 256 : 128
-  worker_memory = local.is_prod ? 512 : 256
+  # When worker container is enabled, allocate 75% to API and 25% to worker.
+  # When worker is disabled (standard default), API receives 100% of task resources.
+  api_cpu       = var.enable_worker_container ? floor(local.total_cpu * 0.75) : local.total_cpu
+  api_memory    = var.enable_worker_container ? floor(local.total_memory * 0.75) : local.total_memory
+  worker_cpu    = var.enable_worker_container ? (local.total_cpu - local.api_cpu) : 0
+  worker_memory = var.enable_worker_container ? (local.total_memory - local.api_memory) : 0
 
   # Built-in fallback health server if raw public node:20-alpine image is used without custom server.js
   effective_api_command = (var.container_image == "public.ecr.aws/docker/library/node:20-alpine" && length(var.api_command) == 3 && var.api_command[2] == "node dist/server.js") ? [
     "sh",
     "-c",
-    "node -e \"const http=require('http');http.createServer((q,s)=>{s.writeHead(200,{'Content-Type':'application/json'});s.end(JSON.stringify({status:'ok',service:'AutoAWS Backend API',env:process.env.ECS_ENVIRONMENT||'dev',cluster:process.env.ECS_CLUSTER||'cluster'}));}).listen(3000,()=>console.log('HTTP Server listening on 3000'));\""
+    "node -e \"const http=require('http');http.createServer((q,s)=>{s.writeHead(200,{'Content-Type':'application/json'});s.end(JSON.stringify({status:'ok',service:'AutoAWS Backend API',env:process.env.ECS_ENVIRONMENT||'dev',cluster:process.env.ECS_CLUSTER||'cluster'}));}).listen(${var.container_port},()=>console.log('HTTP Server listening on ${var.container_port}'));\""
   ] : var.api_command
 
   effective_worker_command = (var.container_image == "public.ecr.aws/docker/library/node:20-alpine" && length(var.worker_command) == 2 && var.worker_command[1] == "dist/worker.js") ? [
@@ -70,7 +70,7 @@ resource "aws_ecr_lifecycle_policy" "backend" {
 }
 
 # --------------------------------------------------------------------------------------------------
-# CloudWatch Log Groups for API and Worker
+# CloudWatch Log Group for Primary API Container
 # --------------------------------------------------------------------------------------------------
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/ecs/${var.project_name}-${var.environment}-api"
@@ -86,6 +86,7 @@ resource "aws_cloudwatch_log_group" "api" {
 }
 
 resource "aws_cloudwatch_log_group" "worker" {
+  count             = var.enable_worker_container ? 1 : 0
   name              = "/ecs/${var.project_name}-${var.environment}-worker"
   retention_in_days = 30
 
@@ -148,10 +149,10 @@ data "aws_iam_policy_document" "execution_policy" {
       "logs:PutLogEvents",
       "logs:CreateLogGroup"
     ]
-    resources = [
-      "${aws_cloudwatch_log_group.api.arn}:*",
-      "${aws_cloudwatch_log_group.worker.arn}:*"
-    ]
+    resources = concat(
+      ["${aws_cloudwatch_log_group.api.arn}:*"],
+      var.enable_worker_container ? ["${aws_cloudwatch_log_group.worker[0].arn}:*"] : []
+    )
   }
 
   dynamic "statement" {
@@ -231,7 +232,7 @@ resource "aws_iam_user" "github_deployer" {
 
 resource "aws_iam_access_key" "github_deployer" {
   count = var.enable_github_deployer_user ? 1 : 0
-  user  = aws_iam_user.github_deployer[0].name
+  user  = aws_iam_user.github_deployer[count.index].name
 }
 
 data "aws_iam_policy_document" "github_deployer_policy" {
@@ -289,8 +290,8 @@ data "aws_iam_policy_document" "github_deployer_policy" {
 resource "aws_iam_user_policy" "github_deployer_policy" {
   count  = var.enable_github_deployer_user ? 1 : 0
   name   = "${var.project_name}-${var.environment}-deployer-policy"
-  user   = aws_iam_user.github_deployer[0].name
-  policy = data.aws_iam_policy_document.github_deployer_policy[0].json
+  user   = aws_iam_user.github_deployer[count.index].name
+  policy = data.aws_iam_policy_document.github_deployer_policy[count.index].json
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -326,7 +327,7 @@ resource "aws_ecs_cluster_capacity_providers" "this" {
 }
 
 # --------------------------------------------------------------------------------------------------
-# Dual-Container ECS Task Definition
+# Single-Container ECS Fargate Task Definition (Primary API Container)
 # --------------------------------------------------------------------------------------------------
 resource "aws_ecs_task_definition" "this" {
   family                   = "${var.project_name}-${var.environment}"
@@ -342,121 +343,126 @@ resource "aws_ecs_task_definition" "this" {
     operating_system_family = "LINUX"
   }
 
-  container_definitions = jsonencode([
-    # Container 1: backend-api-container
-    {
-      name      = "backend-api-container"
-      image     = var.container_image
-      cpu       = local.api_cpu
-      memory    = local.api_memory
-      essential = true
-      command   = local.effective_api_command
+  container_definitions = jsonencode(concat(
+    [
+      {
+        name      = "backend-api-container"
+        image     = var.container_image
+        cpu       = local.api_cpu
+        memory    = local.api_memory
+        essential = true
+        command   = local.effective_api_command
 
-      portMappings = [
-        {
-          containerPort = var.container_port
-          hostPort      = var.container_port
-          protocol      = "tcp"
-          name          = "backend-api-container-${var.container_port}-tcp"
-          appProtocol   = "http"
-        }
-      ]
-
-      environment = [
-        {
-          name  = "HOST"
-          value = "0.0.0.0"
-        },
-        {
-          name  = "ECS_ENVIRONMENT"
-          value = var.environment
-        },
-        {
-          name  = "ECS_CLUSTER"
-          value = local.effective_cluster_name
-        }
-      ]
-
-      secrets = var.secrets_manager_arn != "" ? [
-        {
-          name      = "APP_SECRETS"
-          valueFrom = var.secrets_manager_arn
-        }
-      ] : []
-
-      healthCheck = {
-        command = [
-          "CMD-SHELL",
-          "node -e \"require('http').get('http://127.0.0.1:3000/health',(r)=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""
+        portMappings = [
+          {
+            containerPort = var.container_port
+            hostPort      = var.container_port
+            protocol      = "tcp"
+            name          = "backend-api-container-${var.container_port}-tcp"
+            appProtocol   = "http"
+          }
         ]
-        interval    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 60
-      }
 
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.api.name
-          "awslogs-create-group"  = "true"
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "ecs"
+        environment = [
+          {
+            name  = "PORT"
+            value = tostring(var.container_port)
+          },
+          {
+            name  = "HOST"
+            value = "0.0.0.0"
+          },
+          {
+            name  = "ECS_ENVIRONMENT"
+            value = var.environment
+          },
+          {
+            name  = "ECS_CLUSTER"
+            value = local.effective_cluster_name
+          }
+        ]
+
+        secrets = var.secrets_manager_arn != "" ? [
+          {
+            name      = "APP_SECRETS"
+            valueFrom = var.secrets_manager_arn
+          }
+        ] : []
+
+        healthCheck = {
+          command = [
+            "CMD-SHELL",
+            "node -e \"require('http').get('http://127.0.0.1:${var.container_port}/health',(r)=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""
+          ]
+          interval    = 30
+          timeout     = 5
+          retries     = 3
+          startPeriod = 60
+        }
+
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            "awslogs-group"         = aws_cloudwatch_log_group.api.name
+            "awslogs-create-group"  = "true"
+            "awslogs-region"        = var.aws_region
+            "awslogs-stream-prefix" = "ecs"
+          }
         }
       }
-    },
+    ],
+    var.enable_worker_container ? [
+      {
+        name      = "backend-worker-container"
+        image     = var.container_image
+        cpu       = local.worker_cpu
+        memory    = local.worker_memory
+        essential = false
+        command   = local.effective_worker_command
 
-    # Container 2: backend-worker-container
-    {
-      name      = "backend-worker-container"
-      image     = var.container_image
-      cpu       = local.worker_cpu
-      memory    = local.worker_memory
-      essential = false
-      command   = local.effective_worker_command
+        portMappings = []
 
-      portMappings = []
+        environment = [
+          {
+            name  = "HOST"
+            value = "0.0.0.0"
+          },
+          {
+            name  = "ECS_ENVIRONMENT"
+            value = var.environment
+          },
+          {
+            name  = "ECS_CLUSTER"
+            value = local.effective_cluster_name
+          }
+        ]
 
-      environment = [
-        {
-          name  = "HOST"
-          value = "0.0.0.0"
-        },
-        {
-          name  = "ECS_ENVIRONMENT"
-          value = var.environment
-        },
-        {
-          name  = "ECS_CLUSTER"
-          value = local.effective_cluster_name
-        }
-      ]
+        secrets = var.secrets_manager_arn != "" ? [
+          {
+            name      = "APP_SECRETS"
+            valueFrom = var.secrets_manager_arn
+          }
+        ] : []
 
-      secrets = var.secrets_manager_arn != "" ? [
-        {
-          name      = "APP_SECRETS"
-          valueFrom = var.secrets_manager_arn
-        }
-      ] : []
+        dependsOn = [
+          {
+            containerName = "backend-api-container"
+            condition     = "HEALTHY"
+          }
+        ]
 
-      dependsOn = [
-        {
-          containerName = "backend-api-container"
-          condition     = "HEALTHY"
-        }
-      ]
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.worker.name
-          "awslogs-create-group"  = "true"
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "ecs"
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            "awslogs-group"         = aws_cloudwatch_log_group.worker[0].name
+            "awslogs-create-group"  = "true"
+            "awslogs-region"        = var.aws_region
+            "awslogs-stream-prefix" = "ecs"
+          }
         }
       }
-    }
-  ])
+    ] : []
+  ))
 
   tags = merge(
     var.tags,
@@ -475,7 +481,12 @@ resource "aws_ecs_service" "this" {
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.this.arn
   desired_count   = var.desired_count
-  launch_type     = "FARGATE"
+
+  capacity_provider_strategy {
+    capacity_provider = "FARGATE"
+    weight            = 1
+    base              = 1
+  }
 
   network_configuration {
     subnets          = var.public_subnet_ids
@@ -492,6 +503,11 @@ resource "aws_ecs_service" "this" {
   deployment_controller {
     type = "ECS"
   }
+
+  depends_on = [
+    aws_iam_role_policy.execution_policy,
+    aws_ecs_cluster_capacity_providers.this
+  ]
 
   tags = merge(
     var.tags,
