@@ -4,8 +4,7 @@
   "description": "Production-Ready Modular AWS Infrastructure Provisioner in Terraform",
   "main": "scripts/onboard.js",
   "scripts": {
-    "onboard": "node scripts/onboard.js",
-    "start": "node scripts/onboard.js"
+    "onboard": "node scripts/onboard.js"
   },
   "keywords": [
     "aws",
