@@ -2,13 +2,10 @@
   "name": "autoaws",
   "version": "1.0.0",
   "description": "Production-Ready Modular AWS Infrastructure Provisioner in Terraform",
-  "main": "bin/autoaws.js",
-  "bin": {
-    "autoaws": "./bin/autoaws.js"
-  },
+  "main": "scripts/onboard.js",
   "scripts": {
-    "onboard": "node bin/autoaws.js onboard",
-    "start": "node bin/autoaws.js"
+    "onboard": "node scripts/onboard.js",
+    "start": "node scripts/onboard.js"
   },
   "keywords": [
     "aws",

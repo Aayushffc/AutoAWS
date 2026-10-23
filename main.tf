@@ -75,12 +75,13 @@ module "ecs" {
   public_subnet_ids           = module.vpc.public_subnet_ids
   ecs_sg_id                   = module.vpc.ecs_sg_id
   target_group_arn            = module.alb.target_group_arn
-  secrets_manager_arn         = var.enable_rds ? module.rds[0].secrets_manager_arn : ""
+  secrets_manager_arn         = try(module.rds[0].secrets_manager_arn, "")
   s3_bucket_arn               = module.storage_cdn.s3_bucket_arn
   container_port              = var.container_port
   container_image             = var.container_image
   api_command                 = var.api_command
   worker_command              = var.worker_command
+  enable_worker_container     = var.enable_worker_container
   task_cpu                    = var.ecs_task_cpu
   task_memory                 = var.ecs_task_memory
   desired_count               = var.ecs_desired_count
@@ -125,7 +126,8 @@ module "github_repos" {
   create_oidc_provider        = var.create_github_oidc_provider
   github_org                  = var.github_org
   github_repo                 = var.github_repo
-  ecs_cluster_arn             = module.ecs.cluster_id
+  ecs_cluster_arn             = module.ecs.cluster_arn
+  ecr_repository_arn          = module.ecs.ecr_repository_arn
   s3_bucket_arn               = module.storage_cdn.s3_bucket_arn
   cloudfront_distribution_arn = module.storage_cdn.cloudfront_distribution_arn
 }

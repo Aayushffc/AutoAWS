@@ -82,7 +82,7 @@ output "api_log_group" {
 }
 
 output "worker_log_group" {
-  description = "CloudWatch log group for backend-worker-container"
+  description = "CloudWatch log group for backend-worker-container (if enabled)"
   value       = module.ecs.worker_log_group_name
 }
 
@@ -91,22 +91,22 @@ output "worker_log_group" {
 # --------------------------------------------------------------------------------------------------
 output "rds_endpoint" {
   description = "PostgreSQL connection endpoint (isolated subnet, no public IP)"
-  value       = var.enable_rds ? module.rds[0].db_endpoint : "N/A (RDS Disabled)"
+  value       = try(module.rds[0].db_endpoint, "N/A (RDS Disabled)")
 }
 
 output "rds_database_name" {
   description = "Name of the PostgreSQL database"
-  value       = var.enable_rds ? module.rds[0].db_name : "N/A (RDS Disabled)"
+  value       = try(module.rds[0].db_name, "N/A (RDS Disabled)")
 }
 
 output "secrets_manager_arn" {
   description = "ARN of Secrets Manager secret (<project>/<env>/app_secrets)"
-  value       = var.enable_rds ? module.rds[0].secrets_manager_arn : "N/A (RDS Disabled)"
+  value       = try(module.rds[0].secrets_manager_arn, "N/A (RDS Disabled)")
 }
 
 output "secrets_manager_name" {
   description = "Name path of Secrets Manager secret (<project>/<env>/app_secrets)"
-  value       = var.enable_rds ? module.rds[0].secrets_manager_name : "N/A (RDS Disabled)"
+  value       = try(module.rds[0].secrets_manager_name, "N/A (RDS Disabled)")
 }
 
 # --------------------------------------------------------------------------------------------------
